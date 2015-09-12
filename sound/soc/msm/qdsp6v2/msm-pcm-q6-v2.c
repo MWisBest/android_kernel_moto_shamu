@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -50,7 +50,7 @@ struct snd_msm {
 #define CAPTURE_MIN_NUM_PERIODS     2
 #define CAPTURE_MAX_NUM_PERIODS     8
 #define CAPTURE_MAX_PERIOD_SIZE     4096
-#define CAPTURE_MIN_PERIOD_SIZE     320
+#define CAPTURE_MIN_PERIOD_SIZE     64
 
 static struct snd_pcm_hardware msm_pcm_hardware_capture = {
 	.info =                 (SNDRV_PCM_INFO_MMAP |
@@ -342,11 +342,16 @@ static int msm_pcm_capture_prepare(struct snd_pcm_substream *substream)
 	if (params_format(params) == SNDRV_PCM_FORMAT_S24_LE)
 		bits_per_sample = 24;
 
-	prtd->audio_client->perf_mode = pdata->perf_mode;
-	pr_debug("%s: perf_mode: 0x%x\n", __func__, pdata->perf_mode);
+	/* ULL mode is not supported in capture path */
+	if (pdata->perf_mode == LEGACY_PCM_MODE)
+		prtd->audio_client->perf_mode = LEGACY_PCM_MODE;
+	else
+		prtd->audio_client->perf_mode = LOW_LATENCY_PCM_MODE;
 
-	pr_debug("%s Opening %d-ch PCM read stream\n",
-			__func__, params_channels(params));
+	pr_debug("%s Opening %d-ch PCM read stream, perf_mode %d\n",
+			__func__, params_channels(params),
+			prtd->audio_client->perf_mode);
+
 	ret = q6asm_open_read_v2(prtd->audio_client, FORMAT_LINEAR_PCM,
 			bits_per_sample);
 	if (ret < 0) {
