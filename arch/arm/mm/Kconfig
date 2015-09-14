@@ -588,6 +588,12 @@ config CPU_USE_DOMAINS
 	  This option enables or disables the use of domain switching
 	  via the set_fs() function.
 
+config CPU_CORTEXA15
+	bool "Optimize for Cortex-A15"
+	depends on CPU_V7
+	help
+	  This option tells the compiler to tune for a Cortex-A15 CPU.
+
 #
 # CPU supports 36-bit I/O
 #
