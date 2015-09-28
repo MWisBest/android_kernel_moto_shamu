@@ -1973,6 +1973,164 @@ static ssize_t tfa9890_show_ic_temp(struct device *dev,
 	return scnprintf(buf, PAGE_SIZE, "%u\n", temp);
 }
 
+static ssize_t tfa9890_show_safety_voltage(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct tfa9890_priv *tfa9890 = i2c_get_clientdata(to_i2c_client(dev));
+	u16 val;
+	int voltage = -1;
+
+	if (tfa9890->codec) {
+		/* Should be able to read this all the time */
+		val = snd_soc_read(tfa9890->codec, TFA9890_BATT_CTL_REG);
+		/* to save space in the register for the bypass bit,
+		 * the safety is assumed to be 3.(register)V.
+		 * add that to the visible value, but ONLY if
+		 * we have the part that goes after the '3', to
+		 * avoid confusion. */
+		if (val > 0) {
+			/* axe the bypass setting first, */
+			voltage = val & ~TFA9890_BAT_CTL_BSSBY_MSK;
+			/* then add that 3. */
+			voltage += 30000;
+		}
+	}
+	return scnprintf(buf, PAGE_SIZE, "%i\n", voltage);
+}
+
+static ssize_t tfa9890_write_safety_voltage(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct tfa9890_priv *tfa9890 = i2c_get_clientdata(to_i2c_client(dev));
+	u16 curr_val;
+	u16 new_val;
+
+	if (tfa9890->codec) {
+		if (kstrtou16(buf, 10, &new_val)) {
+			pr_err("%s: error parsing value!\n", __func__);
+			return -EINVAL;
+		}
+
+		/* Note the 8192 limit; testing showed going above 13-bits
+		 * causes a wrap-around. */
+		if (new_val <= 30000 || new_val >= 38192) {
+			pr_err("%s: value out of range!\n", __func__);
+			return -EINVAL;
+		}
+
+		/* Get the current register value. */
+		curr_val = snd_soc_read(tfa9890->codec, TFA9890_BATT_CTL_REG);
+
+		/* Make sure we were able to read something valid here. */
+		if (curr_val > 0) {
+			/* the 3 is implied in the register, don't actually write it. */
+			new_val -= 30000;
+
+			/* Make sure to keep the existing bypass setting. */
+			if (curr_val & TFA9890_BAT_CTL_BSSBY_MSK) {
+				new_val |= TFA9890_BAT_CTL_BSSBY_MSK;
+			}
+
+			/* Write the new value. */
+			snd_soc_write(tfa9890->codec, TFA9890_BATT_CTL_REG, new_val);
+
+			/* Check to make sure the value wrote successfully. */
+			if (new_val != snd_soc_read(tfa9890->codec, TFA9890_BATT_CTL_REG)) {
+				pr_err("%s: failed to write register!\n", __func__);
+				return -EIO;
+			}
+
+			/* inform the success; don't include the bypass setting */
+			pr_info("%s: successfully wrote new value of 3.%uV!\n",
+					__func__, (new_val & ~TFA9890_BAT_CTL_BSSBY_MSK));
+		} else {
+			pr_err("%s: failed to read register!\n", __func__);
+			return -EIO;
+		}
+	} else {
+		pr_err("%s: codec not ready!\n", __func__);
+		return -ENXIO;
+	}
+
+	return count;
+}
+
+static ssize_t tfa9890_show_batt_protection(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct tfa9890_priv *tfa9890 = i2c_get_clientdata(to_i2c_client(dev));
+	u16 val;
+	int batt_protection = -1;
+
+	if (tfa9890->codec) {
+		/* Get the current register value. */
+		val = snd_soc_read(tfa9890->codec, TFA9890_BATT_CTL_REG);
+
+		/* Make sure we were able to read something valid here. */
+		if (val > 0) {
+			if (val & TFA9890_BAT_CTL_BSSBY_MSK)
+				batt_protection = 0;
+			else
+				batt_protection = 1;
+		}
+	}
+
+	return scnprintf(buf, PAGE_SIZE, "%i\n", batt_protection);
+}
+
+static ssize_t tfa9890_write_batt_protection(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct tfa9890_priv *tfa9890 = i2c_get_clientdata(to_i2c_client(dev));
+	u16 val;
+	u16 enable_batt_protection;
+
+	if (tfa9890->codec) {
+		if (kstrtou16(buf, 10, &enable_batt_protection)) {
+			pr_err("%s: error parsing value!\n", __func__);
+			return -EINVAL;
+		}
+
+		if (enable_batt_protection > 1 || enable_batt_protection < 0) {
+			pr_err("%s: value out of range!\n", __func__);
+			return -EINVAL;
+		}
+
+		/* Get the current register value. */
+		val = snd_soc_read(tfa9890->codec, TFA9890_BATT_CTL_REG);
+
+		/* Make sure we were able to read something here. */
+		if (val > 0) {
+			/* Modify the register accordingly. */
+			if (enable_batt_protection)
+				val &= ~(TFA9890_BAT_CTL_BSSBY_MSK);
+			else
+				val |= TFA9890_BAT_CTL_BSSBY_MSK;
+
+			/* Write the new value */
+			snd_soc_write(tfa9890->codec, TFA9890_BATT_CTL_REG, val);
+
+			/* Check to make sure the value wrote successfully */
+			if (val != snd_soc_read(tfa9890->codec, TFA9890_BATT_CTL_REG)) {
+				pr_err("%s: failed to write register!\n", __func__);
+				return -EIO;
+			}
+
+			/* inform the success, with the complete raw value. */
+			pr_info("%s: successfully wrote new register value of %u!\n",
+					__func__, val);
+		} else {
+			pr_err("%s: failed to read register!\n", __func__);
+			return -EIO;
+		}
+	} else {
+		pr_err("%s: codec not ready!\n", __func__);
+		return -ENXIO;
+	}
+
+	return count;
+}
+
 static ssize_t tfa9890_force_calibaration(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t count)
 {
@@ -2017,6 +2175,12 @@ static const struct bin_attribute tf9890_raw_bin_attr[] = {
 static DEVICE_ATTR(ic_temp, S_IRUGO,
 		   tfa9890_show_ic_temp, NULL);
 
+static DEVICE_ATTR(safety_voltage, S_IRUGO | S_IWUSR,
+		   tfa9890_show_safety_voltage, tfa9890_write_safety_voltage);
+
+static DEVICE_ATTR(batt_protection, S_IRUGO | S_IWUSR,
+		   tfa9890_show_batt_protection, tfa9890_write_batt_protection);
+
 static DEVICE_ATTR(spkr_imp, S_IRUGO,
 		   tfa9890_show_spkr_imp, NULL);
 
@@ -2027,6 +2191,8 @@ static struct attribute *tfa9890_attributes[] = {
 	&dev_attr_spkr_imp.attr,
 	&dev_attr_force_calib.attr,
 	&dev_attr_ic_temp.attr,
+	&dev_attr_safety_voltage.attr,
+	&dev_attr_batt_protection.attr,
 	NULL
 };
 
