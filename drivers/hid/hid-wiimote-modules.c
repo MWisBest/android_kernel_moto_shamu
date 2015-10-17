@@ -231,7 +231,10 @@ static int wiimod_battery_get_property(struct power_supply *psy,
 	state = wdata->state.cmd_battery;
 	spin_unlock_irqrestore(&wdata->state.lock, flags);
 
-	val->intval = state * 100 / 255;
+	/* although 1 byte is used for sending battery capacity,
+	 * it's reported on a scale of 0 to 100, not 0 to 255
+	 */
+	val->intval = state;
 	return ret;
 }
 
